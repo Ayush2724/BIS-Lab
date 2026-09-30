@@ -1,0 +1,138 @@
+import random
+
+# ==========================================
+# 1. PROBLEM SETUP & DATA
+# ==========================================
+# Maximum weight capacity of the truck
+TRUCK_CAPACITY = 50  
+
+# Available packages: (Package Name, Weight, Value)
+PACKAGES = [
+    {"name": "Pkg_A", "weight": 12, "value": 40},
+    {"name": "Pkg_B", "weight": 2,  "value": 30},
+    {"name": "Pkg_C", "weight": 1,  "value": 10},
+    {"name": "Pkg_D", "weight": 4,  "value": 10},
+    {"name": "Pkg_E", "weight": 1,  "value": 5},
+    {"name": "Pkg_F", "weight": 20, "value": 55},
+    {"name": "Pkg_G", "weight": 8,  "value": 25},
+    {"name": "Pkg_H", "weight": 15, "value": 45},
+    {"name": "Pkg_I", "weight": 5,  "value": 15},
+    {"name": "Pkg_J", "weight": 10, "value": 35},
+]
+
+NUM_PACKAGES = len(PACKAGES)
+
+# GA Hyperparameters
+POPULATION_SIZE = 50
+GENERATIONS = 100
+CROSSOVER_RATE = 0.8
+MUTATION_RATE = 0.05
+ELITISM_COUNT = 2  # Keep the best individuals across generations
+
+# ==========================================
+# 2. GENETIC ALGORITHM CORE FUNCTIONS
+# ==========================================
+
+def create_chromosome():
+    """Generates a random binary string representing cargo selections."""
+    return [random.choice([0, 1]) for _ in range(NUM_PACKAGES)]
+
+def calculate_fitness(chromosome):
+    """
+    Evaluates individual fitness. Returns total value if weight is within capacity, 
+    otherwise returns 0 (penalizes overweight trucks heavily).
+    """
+    total_weight = 0
+    total_value = 0
+    for idx, gene in enumerate(chromosome):
+        if gene == 1:
+            total_weight += PACKAGES[idx]["weight"]
+            total_value += PACKAGES[idx]["value"]
+            
+    if total_weight > TRUCK_CAPACITY:
+        return 0  # Invalid configuration
+    return total_value
+
+def tournament_selection(population, fitness_scores, k=3):
+    """Selects a parent using Tournament Selection."""
+    selected = random.sample(list(zip(population, fitness_scores)), k)
+    # Return the individual with the highest fitness score
+    return max(selected, key=lambda item: item[1])[0]
+
+def crossover(parent1, parent2):
+    """Applies Single-Point Crossover to create two children."""
+    if random.random() < CROSSOVER_RATE:
+        point = random.randint(1, NUM_PACKAGES - 1)
+        child1 = parent1[:point] + parent2[point:]
+        child2 = parent2[:point] + parent1[point:]
+        return child1, child2
+    return parent1.copy(), parent2.copy()
+
+def mutate(chromosome):
+    """Applies Bit-Flip Mutation based on mutation rate."""
+    for idx in range(NUM_PACKAGES):
+        if random.random() < MUTATION_RATE:
+            chromosome[idx] = 1 - chromosome[idx]  # Flips 0 to 1 or 1 to 0
+
+# ==========================================
+# 3. EVOLUTIONARY PIPELINE LOOP
+# ==========================================
+def run_genetic_algorithm():
+    # Step 1: Initialize population
+    population = [create_chromosome() for _ in range(POPULATION_SIZE)]
+    
+    best_overall_individual = None
+    best_overall_fitness = -1
+
+    for generation in range(GENERATIONS):
+        # Step 2: Evaluate fitness
+        fitness_scores = [calculate_fitness(ind) for ind in population]
+        
+        # Track historical best
+        for idx, score in enumerate(fitness_scores):
+            if score > best_overall_fitness:
+                best_overall_fitness = score
+                best_overall_individual = population[idx].copy()
+
+        # Step 3: Create next generation
+        next_generation = []
+        
+        # Handle Elitism (Preserve the absolute best performers)
+        sorted_pop_by_fitness = [x for _, x in sorted(zip(fitness_scores, population), reverse=True)]
+        next_generation.extend(sorted_pop_by_fitness[:ELITISM_COUNT])
+        
+        # Breed remaining population
+        while len(next_generation) < POPULATION_SIZE:
+            # Selection
+            parent1 = tournament_selection(population, fitness_scores)
+            parent2 = tournament_selection(population, fitness_scores)
+            
+            # Crossover
+            child1, child2 = crossover(parent1, parent2)
+            
+            # Mutation
+            mutate(child1)
+            mutate(child2)
+            
+            next_generation.append(child1)
+            if len(next_generation) < POPULATION_SIZE:
+                next_generation.append(child2)
+                
+        population = next_generation
+
+    # ==========================================
+    # 4. RESULTS DISPLAY
+    # ==========================================
+    final_weight = sum(PACKAGES[i]["weight"] for i, gene in enumerate(best_overall_individual) if gene == 1)
+    
+    print("--- GA CARGO LOADING RUN COMPLETE ---")
+    print(f"Optimal Value Found: {best_overall_fitness}")
+    print(f"Total Combined Weight: {final_weight} / {TRUCK_CAPACITY} limit")
+    print("\nPackages Selected to Load:")
+    for idx, gene in enumerate(best_overall_individual):
+        if gene == 1:
+            pkg = PACKAGES[idx]
+            print(f" • {pkg['name']} (Weight: {pkg['weight']}, Value: {pkg['value']})")
+
+if __name__ == "__main__":
+    run_genetic_algorithm()
