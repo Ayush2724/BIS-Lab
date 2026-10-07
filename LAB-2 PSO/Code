@@ -1,0 +1,122 @@
+import random
+import numpy as np
+
+
+def target_frequency_response(frequencies):
+    """Defines the ideal filter/antenna mask (e.g., S11 < -20 dB from 2.4-2.5 GHz)."""
+    targets = []
+    for f in frequencies:
+        if 2.4 <= f <= 2.5:
+            targets.append(-25.0)  # Target passband return loss
+        else:
+            targets.append(0.0)  # Stopband/unoptimized region
+    return np.array(targets)
+
+
+def simulated_frequency_response(dimensions, frequencies):
+    """Mock EM/analytical model solver.
+
+    Replace this with your actual analytical formulas or API call to HFSS/CST.
+    """
+    # x[0] = length, x[1] = width, x[2] = gap width
+    L, W, g = dimensions
+    # Simple dummy lorentzian-like resonance approximation for demo purposes
+    res_freq = 3.0 / (L * np.sqrt(W + 0.1))
+    response = -25.0 / (1.0 + 100.0 * (frequencies - res_freq) ** 2) - abs(
+        g - 0.5
+    )
+    return np.clip(response, -40.0, 0.0)
+
+
+def fitness_function(dimensions, frequencies, target):
+    """Calculates Mean Squared Error (MSE) between simulated and target responses."""
+    simulated = simulated_frequency_response(dimensions, frequencies)
+    # Focus optimization heavily on the target band error
+    weights = np.where((frequencies >= 2.4) & (frequencies <= 2.5), 2.0, 0.5)
+    error = np.sum(weights * (simulated - target) ** 2)
+    return error
+
+
+def pso_antenna_filter_design():
+    # --- Hyperparameters ---
+    num_particles = 30
+    iterations = 50
+    w = 0.7  # Inertia weight
+    c1 = 1.5  # Cognitive coefficient
+    c2 = 1.5  # Social coefficient
+
+    # Evaluation frequencies (GHz)
+    frequencies = np.linspace(2.0, 3.0, 100)
+    target = target_frequency_response(frequencies)
+
+    # Search Space Bounds: [Length, Width, Gap] in mm
+    bounds_min = np.array([10.0, 5.0, 0.1])
+    bounds_max = np.array([30.0, 20.0, 2.0])
+    num_dimensions = len(bounds_min)
+
+    # --- Initialization ---
+    positions = np.random.uniform(
+        bounds_min, bounds_max, (num_particles, num_dimensions)
+    )
+    velocities = np.random.uniform(
+        -1.0, 1.0, (num_particles, num_dimensions)
+    ) * (bounds_max - bounds_min) * 0.1
+
+    pbest_positions = np.copy(positions)
+    pbest_fitness = np.array(
+        [
+            fitness_function(p, frequencies, target)
+            for p in pbest_positions
+        ]
+    )
+
+    gbest_index = np.argmin(pbest_fitness)
+    gbest_position = np.copy(pbest_positions[gbest_index])
+    gbest_fitness = pbest_fitness[gbest_index]
+
+    # --- Optimization Loop ---
+    for it in range(iterations):
+        for i in range(num_particles):
+            r1 = np.random.rand(num_dimensions)
+            r2 = np.random.rand(num_dimensions)
+
+            # Update Velocity & Position
+            velocities[i] = (
+                w * velocities[i]
+                + c1 * r1 * (pbest_positions[i] - positions[i])
+                + c2 * r2 * (gbest_position - positions[i])
+            )
+            positions[i] += velocities[i]
+
+            # Boundary Constraints Enforcement
+            positions[i] = np.clip(positions[i], bounds_min, bounds_max)
+
+            # Evaluate Fitness
+            current_fitness = fitness_function(
+                positions[i], frequencies, target
+            )
+
+            # Update Personal Best
+            if current_fitness < pbest_fitness[i]:
+                pbest_fitness[i] = current_fitness
+                pbest_positions[i] = np.copy(positions[i])
+
+                # Update Global Best
+                if current_fitness < gbest_fitness:
+                    gbest_fitness = current_fitness
+                    gbest_position = np.copy(positions[i])
+
+        if (it + 1) % 10 == 0 or it == 0:
+            print(
+                f"Iteration {it+1}/{iterations} | Current Best Fitness (MSE): {gbest_fitness:.4f}"
+            )
+
+    print("\n--- Optimization Complete ---")
+    print(
+        f"Optimal Dimensions -> Length: {gbest_position[0]:.3f} mm, Width: {gbest_position[1]:.3f} mm, Gap: {gbest_position[2]:.3f} mm"
+    )
+    print(f"Final Fitness Error: {gbest_fitness:.6f}")
+
+
+if __name__ == "__main__":
+    pso_antenna_filter_design()
