@@ -1,0 +1,142 @@
+import numpy as np
+from scipy.special import gamma
+
+# --- STEP 0: Solar Physics & Fitness Function Definition ---
+# Location: Bengaluru, India (Latitude = 12.97 degrees North)
+LATITUDE = 12.97
+
+
+def calculate_annual_solar_radiation(tilt_deg):
+    """
+    Fitness Function f(x): Calculates relative annual solar irradiance
+    (kWh/m^2/year) on a south-facing tilted surface.
+    Higher energy = Better fitness.
+    """
+    # Constrain tilt angle physically between 0 (flat) and 90 (vertical) degrees
+    tilt_deg = np.clip(tilt_deg, 0.0, 90.0)
+    tilt_rad = np.radians(tilt_deg)
+    lat_rad = np.radians(LATITUDE)
+
+    total_energy = 0.0
+
+    # Simulate across all 365 days of the year
+    for day in range(1, 366):
+        # Solar declination angle (delta) in radians
+        declination = np.radians(23.45 * np.sin(np.radians(360 * (284 + day) / 365)))
+
+        # Sunset hour angle on a horizontal surface
+        cos_ws = -np.tan(lat_rad) * np.tan(declination)
+        ws = np.arccos(np.clip(cos_ws, -1.0, 1.0))
+
+        # Sunset hour angle on the tilted surface
+        cos_ws_tilt = -np.tan(lat_rad - tilt_rad) * np.tan(declination)
+        ws_tilt = np.arccos(np.clip(cos_ws_tilt, -1.0, 1.0))
+        ws_eff = min(ws, ws_tilt)
+
+        # Extraterrestrial daily radiation factor
+        dr = 1 + 0.033 * np.cos(np.radians(360 * day / 365))
+
+        # Geometric factor (Rb) for beam radiation on tilted surface
+        numerator = ws_eff * np.sin(lat_rad - tilt_rad) * np.sin(declination) + np.cos(
+            lat_rad - tilt_rad
+        ) * np.cos(declination) * np.sin(ws_eff)
+        denominator = ws * np.sin(lat_rad) * np.sin(declination) + np.cos(lat_rad) * np.cos(
+            declination
+        ) * np.sin(ws)
+
+        Rb = max(0.0, numerator / (denominator + 1e-9))
+
+        # Daily clear-sky irradiance approximation (kWh/m^2/day)
+        H_daily = 5.5 * dr * (0.7 * Rb + 0.3 * (1 + np.cos(tilt_rad)) / 2)
+        total_energy += H_daily
+
+    return total_energy
+
+
+def levy_flight(beta=1.5):
+    """Generates a step size using Mantegna's algorithm for Lévy Flight."""
+    sigma_u = (
+        gamma(1 + beta)
+        * np.sin(np.pi * beta / 2)
+        / (gamma((1 + beta) / 2) * beta * (2 ** ((beta - 1) / 2)))
+    ) ** (1 / beta)
+    u = np.random.normal(0, sigma_u)
+    v = np.random.normal(0, 1)
+    step = u / (abs(v) ** (1 / beta))
+    return step
+
+
+# --- MAIN CUCKOO SEARCH ALGORITHM ---
+def cuckoo_search_solar_tilt():
+    # 1. Initialize n nests, discovery probability Pa, and maximum iterations MaxIter
+    n = 20  # Number of host nests (candidate tilt angles)
+    Pa = 0.25  # Probability that host bird discovers cuckoo's egg
+    MaxIter = 100  # Maximum generations
+    lower_bound = 0.0  # Minimum tilt (0 degrees - horizontal)
+    upper_bound = 90.0  # Maximum tilt (90 degrees - vertical)
+
+    # 2. Generate n random solutions (nests)
+    nests = np.random.uniform(lower_bound, upper_bound, n)
+
+    # 3. Calculate fitness f(x) of each nest
+    fitness = np.array([calculate_annual_solar_radiation(x) for x in nests])
+
+    # Track initial best
+    best_idx = np.argmax(fitness)
+    best_nest = nests[best_idx]
+    best_fitness = fitness[best_idx]
+
+    # 4. Set iteration t = 0
+    t = 0
+
+    # 5. WHILE t < MaxIter
+    while t < MaxIter:
+        # a. Select a cuckoo and generate a new solution using Lévy Flight
+        i = np.random.randint(0, n)
+        step_size = 0.5 * levy_flight() * (nests[i] - best_nest)
+        new_solution = np.clip(nests[i] + step_size, lower_bound, upper_bound)
+
+        # b. Calculate fitness of the new solution
+        new_fitness = calculate_annual_solar_radiation(new_solution)
+
+        # c. Randomly select a nest j
+        j = np.random.randint(0, n)
+
+        # d. IF new solution is better than nest j: Replace nest j with new solution
+        if new_fitness > fitness[j]:
+            nests[j] = new_solution
+            fitness[j] = new_fitness
+
+        # e. Abandon Pa fraction of the worst nests
+        num_abandon = int(Pa * n)
+        sorted_indices = np.argsort(fitness)  # Ascending order (worst first)
+        worst_indices = sorted_indices[:num_abandon]
+
+        # f. Generate new solutions for abandoned nests using Lévy Flight (or random walk)
+        for idx in worst_indices:
+            rand_step = np.random.rand() * (
+                nests[np.random.randint(0, n)] - nests[np.random.randint(0, n)]
+            )
+            nests[idx] = np.clip(nests[idx] + rand_step, lower_bound, upper_bound)
+            # g. Evaluate fitness of new nests
+            fitness[idx] = calculate_annual_solar_radiation(nests[idx])
+
+        # h. Rank all nests and preserve the best solution
+        current_best_idx = np.argmax(fitness)
+        if fitness[current_best_idx] > best_fitness:
+            best_fitness = fitness[current_best_idx]
+            best_nest = nests[current_best_idx]
+
+        # i. Set t = t + 1
+        t += 1
+
+    # 6. END WHILE
+    # 7. Return the best solution found
+    return best_nest, best_fitness
+
+
+# Execute Optimization
+optimal_tilt, max_energy = cuckoo_search_solar_tilt()
+print(f"Location Latitude: {LATITUDE}° N")
+print(f"Optimal Annual Tilt Angle: {optimal_tilt:.2f}°")
+print(f"Estimated Annual Solar Yield: {max_energy:.2f} kWh/m²/year")
