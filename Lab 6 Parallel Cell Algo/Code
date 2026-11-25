@@ -1,0 +1,103 @@
+import time
+import numba as nb
+import numpy as np
+
+# Configuration
+ROAD_LENGTH = 5000  # Number of cells (e.g., 5,000 cells * 7.5m = 37.5 km highway)
+NUM_LANES = 4  # Multi-lane highway
+DENSITY = 0.25  # 25% of road cells initially occupied by vehicles
+MAX_SPEED = 5  # Max velocity (cells per time step)
+SLOW_PROB = 0.2  # Probability of random driver braking (causes phantom jams)
+STEPS = 1000  # Simulation time steps
+
+
+def initialize_road(lanes, length, density, max_speed):
+    """Creates a 2D cellular grid: -1 represents an empty cell,
+
+    0 to max_speed represents a vehicle and its current speed.
+    """
+    grid = np.full((lanes, length), -1, dtype=np.int32)
+    mask = np.random.random((lanes, length)) < density
+    grid[mask] = np.random.randint(0, max_speed + 1, size=np.sum(mask))
+    return grid
+
+
+@nb.njit(parallel=True)
+def step_traffic_parallel(grid, max_speed, slow_prob, red_light_pos=-1):
+    """Updates all road cells in parallel using double-buffering (read from grid, write to next_grid).
+
+    Includes a simulated traffic light bottleneck at `red_light_pos`.
+    """
+    lanes, length = grid.shape
+    next_grid = np.full((lanes, length), -1, dtype=np.int32)
+
+    # Parallel loop across all lanes and road cells
+    for lane in nb.prange(lanes):
+        for pos in range(length):
+            v = grid[lane, pos]
+
+            # Skip empty cells
+            if v == -1:
+                continue
+
+            # 1. Acceleration: Driver tries to reach max speed
+            v = min(v + 1, max_speed)
+
+            # 2. Check distance to the next vehicle or red traffic light
+            dist = 1
+            while dist <= v:
+                check_pos = (pos + dist) % length  # Periodic boundary (ring road)
+
+                # Treat a red light as an occupied obstacle
+                if check_pos == red_light_pos:
+                    break
+                if grid[lane, check_pos] != -1:
+                    break
+                dist += 1
+
+            # Braking to avoid collision
+            v = min(v, dist - 1)
+
+            # 3. Randomization: Drivers randomly slow down (creates realistic traffic waves)
+            if v > 0 and np.random.random() < slow_prob:
+                v -= 1
+
+            # 4. Vehicle Movement: Place vehicle in its new cell in the next time step
+            new_pos = (pos + v) % length
+            next_grid[lane, new_pos] = v
+
+    return next_grid
+
+
+def run_simulation():
+    road = initialize_road(NUM_LANES, ROAD_LENGTH, DENSITY, MAX_SPEED)
+
+    # Warm-up run to compile Numba JIT function
+    _ = step_traffic_parallel(road, MAX_SPEED, SLOW_PROB)
+
+    start_time = time.perf_counter()
+
+    for step in range(STEPS):
+        # Simulate a traffic signal at cell 2500 turning red every 100 steps for 50 steps
+        red_light = 2500 if (step % 100) < 50 else -1
+        road = step_traffic_parallel(
+            road, MAX_SPEED, SLOW_PROB, red_light_pos=red_light
+        )
+
+    elapsed = time.perf_counter() - start_time
+
+    # Calculate final metrics
+    occupied_cells = road[road != -1]
+    avg_speed = np.mean(occupied_cells)
+    stopped_cars = np.sum(occupied_cells == 0)
+
+    print(
+        f"Simulated {NUM_LANES * ROAD_LENGTH:,} cells for {STEPS} steps in {elapsed:.4f} seconds"
+    )
+    print(f"Total Vehicles: {len(occupied_cells):,}")
+    print(f"Average Speed: {avg_speed:.2f} cells/step")
+    print(f"Stopped Vehicles (Congestion): {stopped_cars:,}")
+
+
+if __name__ == "__main__":
+    run_simulation()
