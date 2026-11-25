@@ -1,0 +1,88 @@
+import numpy as np
+
+# 1. Everyday Objective: Maximize Satisfaction (We minimize negative satisfaction)
+def budget_objective(allocation):
+    food, utilities, savings, lifestyle = allocation
+
+    # Diminishing returns model (square root / log curves) weighted by personal priority
+    satisfaction = (
+        15 * np.sqrt(food) +        # High essential value
+        10 * np.sqrt(utilities) +   # Necessary baseline value
+        20 * np.sqrt(savings) +     # High long-term value
+        12 * np.sqrt(lifestyle)     # Moderate enjoyment value
+    )
+
+    # Real-Life Constraint: Total spending must not exceed ₹50,000
+    total_budget = 50000
+    total_spent = np.sum(allocation)
+
+    penalty = 0
+    if total_spent > total_budget:
+        # Heavy penalty if over budget
+        penalty += 100 * (total_spent - total_budget)**2
+
+    # GWO minimizes functions, so we return negative satisfaction + penalty
+    return -satisfaction + penalty
+
+# 2. Grey Wolf Optimizer (GWO)
+def grey_wolf_optimizer(obj_func, lb, ub, num_wolves=30, max_iter=300):
+    dim = len(lb)
+    positions = np.random.uniform(lb, ub, (num_wolves, dim))
+
+    alpha_pos, alpha_score = np.zeros(dim), float("inf")
+    beta_pos, beta_score = np.zeros(dim), float("inf")
+    delta_pos, delta_score = np.zeros(dim), float("inf")
+
+    for t in range(max_iter):
+        for i in range(num_wolves):
+            # Keep spending within minimum needs and maximum limits
+            positions[i] = np.clip(positions[i], lb, ub)
+
+            fitness = obj_func(positions[i])
+
+            if fitness < alpha_score:
+                delta_score, delta_pos = beta_score, beta_pos.copy()
+                beta_score, beta_pos = alpha_score, alpha_pos.copy()
+                alpha_score, alpha_pos = fitness, positions[i].copy()
+            elif fitness < beta_score:
+                delta_score, delta_pos = beta_score, beta_pos.copy()
+                beta_score, beta_pos = fitness, positions[i].copy()
+            elif fitness < delta_score:
+                delta_score, delta_pos = fitness, positions[i].copy()
+
+        a = 2 - t * (2 / max_iter)
+
+        for i in range(num_wolves):
+            for j in range(dim):
+                r1, r2 = np.random.rand(), np.random.rand()
+                A1, C1 = 2 * a * r1 - a, 2 * r2
+                X1 = alpha_pos[j] - A1 * abs(C1 * alpha_pos[j] - positions[i, j])
+
+                r1, r2 = np.random.rand(), np.random.rand()
+                A2, C2 = 2 * a * r1 - a, 2 * r2
+                X2 = beta_pos[j] - A2 * abs(C2 * beta_pos[j] - positions[i, j])
+
+                r1, r2 = np.random.rand(), np.random.rand()
+                A3, C3 = 2 * a * r1 - a, 2 * r2
+                X3 = delta_pos[j] - A3 * abs(C3 * delta_pos[j] - positions[i, j])
+
+                positions[i, j] = (X1 + X2 + X3) / 3.0
+
+    return alpha_pos, -alpha_score
+
+# --- Run Everyday Budget Optimization ---
+if __name__ == "__main__":
+    # Minimum required spending per category: [Food, Utilities, Savings, Lifestyle]
+    min_needs = np.array([8000, 5000, 5000, 2000])
+    # Maximum reasonable spending per category
+    max_limits = np.array([25000, 15000, 30000, 20000])
+
+    best_split, max_satisfaction = grey_wolf_optimizer(budget_objective, min_needs, max_limits)
+
+    categories = ["Groceries & Food", "Utilities & Bills", "Savings & Invest", "Lifestyle & Fun"]
+    print("=== Optimal Monthly Budget Split (₹50,000 Total) ===")
+    for name, amount in zip(categories, best_split):
+        print(f"{name:<20}: ₹{amount:,.2f}")
+    print("-" * 45)
+    print(f"{'Total Allocated':<20}: ₹{np.sum(best_split):,.2f}")
+    print(f"{'Satisfaction Score':<20}: {max_satisfaction:.2f}")
